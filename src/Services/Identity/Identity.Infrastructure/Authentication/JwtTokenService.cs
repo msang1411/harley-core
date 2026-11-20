@@ -17,6 +17,8 @@ public sealed class JwtTokenService : ITokenService
 
     public SecurityKey SigningKey { get; }
 
+    public PublicJwk PublicJwk { get; }
+
     public JwtTokenService(IOptions<JwtOptions> options)
     {
         _options = options.Value;
@@ -26,6 +28,16 @@ public sealed class JwtTokenService : ITokenService
 
         var keyId = Convert.ToHexString(SHA256.HashData(rsa.ExportSubjectPublicKeyInfo()))[..16];
         SigningKey = new RsaSecurityKey(rsa) { KeyId = keyId };
+        // includePrivateParameters: false => Retrieve ONLY the modulus (n) and exponent (e)—the public components.
+        var publicParams = rsa.ExportParameters(includePrivateParameters: false);
+            PublicJwk = new PublicJwk(
+            Kty: "RSA",
+            Use: "sig",
+            Alg: "RS256",
+            Kid: keyId,
+            N: Base64UrlEncoder.Encode(publicParams.Modulus),
+            E: Base64UrlEncoder.Encode(publicParams.Exponent));
+
         _credentials = new SigningCredentials(SigningKey, SecurityAlgorithms.RsaSha256);
     }
 
@@ -65,3 +77,5 @@ public sealed class JwtTokenService : ITokenService
     public string HashRefreshToken(string token) =>
         Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(token)));
 }
+
+public sealed record PublicJwk(string Kty, string Use, string Alg, string Kid, string N, string E);

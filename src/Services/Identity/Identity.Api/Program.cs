@@ -73,6 +73,8 @@ if (app.Environment.IsDevelopment())
 }
 
 app.MapGet("/", () => Results.Ok(new { service = "identity", status = "running" }));
+app.MapGet("/.well-known/jwks.json", (JwtTokenService tokenService) =>
+    Results.Ok(new { keys = new[] { tokenService.PublicJwk } }));
 app.MapHealthChecks("/health");
 app.MapAuthEndpoints();
 
