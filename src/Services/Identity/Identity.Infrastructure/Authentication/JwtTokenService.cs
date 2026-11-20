@@ -1,5 +1,6 @@
 using System.Security.Claims;
 using System.Security.Cryptography;
+using System.Text;
 using Identity.Application.Abstractions;
 using Identity.Domain.Entities;
 using Microsoft.Extensions.Options;
@@ -53,4 +54,14 @@ public sealed class JwtTokenService : ITokenService
 
         return new AccessToken(_handler.CreateToken(descriptor), expires);
     }
+
+    public RefreshTokenValue CreateRefreshToken()
+    {
+        var token = Base64UrlEncoder.Encode(RandomNumberGenerator.GetBytes(32));
+        var expires = DateTime.UtcNow.AddDays(_options.RefreshTokenDays);
+        return new RefreshTokenValue(token, HashRefreshToken(token), expires);
+    }
+
+    public string HashRefreshToken(string token) =>
+        Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(token)));
 }

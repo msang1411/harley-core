@@ -22,6 +22,18 @@ public static class AuthEndpoints
             return result.IsSuccess ? Results.Ok(result.Value) : result.ToProblem();
         });
 
+        group.MapPost("/refresh", async (RefreshRequest request, IAuthService auth) =>
+        {
+            var result = await auth.RefreshAsync(request);
+            return result.IsSuccess ? Results.Ok(result.Value) : result.ToProblem();
+        });
+
+        group.MapPost("/logout", async (LogoutRequest request, IAuthService auth) =>
+        {
+            await auth.LogoutAsync(request);
+            return Results.NoContent();
+        });
+
         group.MapGet("/me", async (ClaimsPrincipal principal, IAuthService auth) =>
         {
             if (!Guid.TryParse(principal.FindFirstValue("sub"), out var userId))

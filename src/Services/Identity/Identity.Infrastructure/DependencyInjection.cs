@@ -25,6 +25,7 @@ public static class DependencyInjection
 
         services.AddSingleton<JwtTokenService>();
         services.AddSingleton<ITokenService>(sp => sp.GetRequiredService<JwtTokenService>());
+        services.AddScoped<IRefreshTokenStore, RefreshTokenStore>();
 
         return services;
     }
