@@ -3,6 +3,8 @@ using Identity.Infrastructure.Persistence;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
+using Identity.Application.Abstractions;
+using Identity.Infrastructure.Authentication;
 
 namespace Identity.Infrastructure;
 
@@ -20,6 +22,9 @@ public static class DependencyInjection
             })
             .AddRoles<IdentityRole<Guid>>()
             .AddEntityFrameworkStores<AppDbContext>();
+
+        services.AddSingleton<JwtTokenService>();
+        services.AddSingleton<ITokenService>(sp => sp.GetRequiredService<JwtTokenService>());
 
         return services;
     }

@@ -29,6 +29,9 @@ services:
       ASPNETCORE_ENVIRONMENT: Development
       ConnectionStrings__Default: Host=postgres;Port=5432;Database=identity_db;Username=${POSTGRES_USER};Password=${POSTGRES_PASSWORD}
       Database__AutoMigrate: "true"
+      Jwt__PrivateKeyPath: /keys/private.pem
+    volumes:
+      - ./keys/private.pem:/keys/private.pem:ro
     depends_on:
       postgres:
         condition: service_healthy
