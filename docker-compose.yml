@@ -19,5 +19,21 @@ services:
       timeout: 5s
       retries: 10
 
+  identity-api:
+    build:
+      context: .
+      dockerfile: src/Services/Identity/Identity.Api/Dockerfile
+    container_name: harley-identity-api
+    restart: unless-stopped
+    environment:
+      ASPNETCORE_ENVIRONMENT: Development
+      ConnectionStrings__Default: Host=postgres;Port=5432;Database=identity_db;Username=${POSTGRES_USER};Password=${POSTGRES_PASSWORD}
+      Database__AutoMigrate: "true"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "5001:8080"
+
 volumes:
   pgdata:
