@@ -17,9 +17,10 @@ Guidance for Claude Code when working in the `harley-core` repository.
 
 | Service | Purpose | Status |
 |---|---|---|
-| Identity | Registration, login, JWT issuing, refresh tokens | In progress |
-| Gateway (YARP) | Single entry point, CORS, rate limiting | Planned |
-| Blog | Blog features | Planned |
+| Identity | Registration, login, JWT issuing, refresh tokens | Done (core flows, validation, integration tests) |
+| Gateway (YARP) | Single entry point, CORS, rate limiting | In progress |
+| BuildingBlocks.Common | Shared JWT validation via JWKS for downstream services | In progress |
+| Blog | Blog features | Next |
 | Finance | Money management | Planned |
 | English | English learning features | Planned |
 
@@ -39,12 +40,18 @@ The maintainer is building this project step by step and wants to **understand**
 ```
 harley-core/
 ├── src/
+│   ├── Gateway/
+│   │   └── Gateway.Api/                  # YARP reverse proxy, CORS, rate limiting (port 8080)
+│   ├── BuildingBlocks/
+│   │   └── BuildingBlocks.Common/        # Shared infrastructure helpers (JWT validation via JWKS)
 │   └── Services/
 │       └── Identity/
 │           ├── Identity.Domain/          # Entities only, no business dependencies
-│           ├── Identity.Application/     # Use cases, DTOs, abstractions (interfaces)
+│           ├── Identity.Application/     # Use cases, DTOs, validators, abstractions
 │           ├── Identity.Infrastructure/  # EF Core, JWT signing, store implementations
-│           └── Identity.Api/             # Program.cs, endpoints, Dockerfile
+│           └── Identity.Api/             # Program.cs, endpoints, Dockerfile (port 5001 locally)
+├── tests/
+│   └── Identity.Tests/                   # Validator unit tests + integration tests (Testcontainers)
 ├── docker/postgres/init.sql              # Creates one database per service
 ├── docker-compose.yml
 ├── Directory.Build.props                 # Shared settings (net9.0, nullable, implicit usings)
@@ -61,11 +68,13 @@ Future services follow the same pattern under `src/Services/<Name>/`. Very simpl
 1. **Dependency direction**: `Domain` <- `Application` <- `Infrastructure` and `Api`. `Domain` references nothing internal. `Application` references only `Domain`. Never reference `Infrastructure` from `Application`.
 2. **Interfaces live in Application, implementations live in Infrastructure.** Example: `ITokenService` and `IRefreshTokenStore` are in Application; `JwtTokenService` and `RefreshTokenStore` are in Infrastructure.
 3. **Database per service.** One PostgreSQL instance, one database per service (`identity_db`, `blog_db`, `finance_db`, `english_db`). A service never reads another service's database.
-4. **Only Identity owns users.** Other services store only a `UserId` (Guid) taken from the `sub` claim of the JWT. They validate tokens using the public key from the JWKS endpoint and never call Identity per request.
-5. **Share infrastructure, not domain.** If a shared library is introduced later (`BuildingBlocks/Common`), it may contain logging, auth setup, and error handling helpers. It must never contain entities or domain logic.
+4. **Only Identity owns users.** Other services store only a `UserId` (Guid) taken from the `sub` claim of the JWT. They validate tokens with `BuildingBlocks.Common` (`AddJwtAuthentication`), which downloads Identity's public key through the OIDC discovery document and the JWKS endpoint, then caches it. They never call Identity per request.
+5. **Share infrastructure, not domain.** `BuildingBlocks.Common` may contain auth setup, logging, and error handling helpers. It must never contain entities or domain logic. Identity itself does not use it (it validates tokens with its own signing key).
 6. **Use cases return `Result<T>`** (see `Identity.Application/Common/Result.cs`) instead of throwing exceptions for expected failures. Endpoints convert results with `ToProblem()`.
 7. **Endpoints stay thin**: bind the request, call the application service, map the result to an HTTP response. No business logic in endpoints.
 8. Do not add a message broker (RabbitMQ, etc.) until there is a concrete need for async cross-service communication.
+9. **Services validate JWTs themselves.** The Gateway does not validate tokens; it only routes, applies CORS, and rate limits. Never assume the Gateway is the only way to reach a service.
+10. **Internal endpoints are not routed by the Gateway** (`/health`, `/.well-known/*`). Add a Gateway route only when an endpoint must be public.
 
 ## Identity service: authentication design
 
@@ -91,6 +100,35 @@ Design decisions that must be preserved:
 - **Uniform errors**: wrong email, wrong password, and locked account all return the same `InvalidCredentials` error. All refresh failures return the same `InvalidRefreshToken` error. The real reason is only logged server-side.
 - **Lockout**: handled by ASP.NET Identity (`AccessFailedAsync`, `IsLockedOutAsync`).
 - **JWKS**: build the JWK manually from `ExportParameters(includePrivateParameters: false)`. Never serialize the private key or use helpers that may include private parameters.
+
+## Gateway design
+
+- The Gateway is a YARP reverse proxy (`src/Gateway/Gateway.Api`). Routes and clusters live in `appsettings.json` under `ReverseProxy`.
+- It only routes, applies CORS, and rate limits. It contains no business logic and does not validate JWTs.
+- Routing: `/auth/{**catch-all}` goes to Identity. More specific routes for `/auth/login`, `/auth/register`, and `/auth/refresh` take precedence so that they can carry rate limit policies.
+- Rate limiting uses the built-in ASP.NET Core rate limiter (sliding window, partitioned by client IP). Policies: `auth-credentials` (login and register) and `auth-refresh`. Limits come from the `RateLimiting` config section. Counters live in memory, per instance.
+- CORS uses one named policy, `frontend`. Allowed origins come from `Cors:AllowedOrigins` (exact origins, no trailing slash). Never use `*` together with credentials.
+- Middleware order matters: `UseCors` comes before `UseRateLimiter`, so preflight requests do not consume permits.
+- Behind a reverse proxy in production, configure `ForwardedHeaders` with explicit trusted proxies. Otherwise every client appears with the proxy's IP and they all share one rate limit.
+- Adding a new service means adding a cluster and its routes to the Gateway configuration.
+
+## BuildingBlocks.Common: JWT validation for downstream services
+
+Usage in a service:
+
+```csharp
+builder.Services.AddJwtAuthentication(builder.Configuration);
+// ...
+app.UseAuthentication();
+app.UseAuthorization();
+```
+
+- Required config section `Jwt`: `Issuer`, `Audience`, `MetadataAddress` (Identity's `/.well-known/openid-configuration`), and `RequireHttpsMetadata` (false only for local plain HTTP).
+- Identity publishes a minimal OIDC discovery document that points to `/.well-known/jwks.json`. The JwtBearer handler downloads and caches the keys and refreshes them when it sees an unknown `kid` (key rotation).
+- Only RS256 is accepted (`ValidAlgorithms`). Signature, issuer, audience, and lifetime are always validated.
+- `ClaimsPrincipal.GetUserId()` returns the user id from the `sub` claim.
+- Inside Docker, `MetadataAddress` uses the internal host name (for example `http://identity-api:8080/...`), never the Gateway.
+- A service's Dockerfile must copy the `BuildingBlocks.Common` csproj before `dotnet restore`.
 
 ## Common commands
 
@@ -118,6 +156,12 @@ dotnet ef migrations add <MigrationName> \
 # Quick checks
 curl http://localhost:5001/health
 curl http://localhost:5001/.well-known/jwks.json
+
+# Run the Gateway locally (http://localhost:8080); Identity must be running on port 5001
+dotnet run --project src/Gateway/Gateway.Api
+
+# Run all tests (Docker must be running)
+dotnet test
 ```
 
 Notes:
@@ -147,9 +191,19 @@ Notes:
 
 ## Testing
 
-- Unit tests for application logic; integration tests with **Testcontainers + real PostgreSQL** (no in-memory database, behavior differs for `ExecuteUpdateAsync` and constraints).
-- Tests live under `tests/`, for example `tests/Identity.Tests`.
-- Critical scenarios to cover for Identity: register (success, duplicate, weak password), login (success, wrong password, lockout), refresh rotation, refresh reuse detection (family revoked), logout, `/auth/me` with and without a token.
+- Tests live under `tests/`. Currently: `tests/Identity.Tests`.
+- Unit tests for pure logic (for example validators). Integration tests use **Testcontainers + real PostgreSQL**; no in-memory database.
+- Integration tests share one `IdentityApiFactory` (one API host, one PostgreSQL container) through the `Identity API` xUnit collection. Every test class must carry `[Collection(ApiCollection.Name)]`.
+- The test host receives its configuration through **environment variables**, because `Program.cs` reads configuration eagerly. It runs in the `Testing` environment with a throwaway RSA key.
+- Every test creates its own user with a unique email. Never rely on database state left by another test.
+- `JwksConsumerTests` is a contract test: it starts a tiny host that uses `BuildingBlocks.Common` and validates tokens issued by Identity, so changes to the JWKS or discovery endpoints cannot silently break downstream services.
+- Critical Identity scenarios covered: register, login, lockout, `/auth/me`, refresh rotation, reuse detection, concurrent refresh, logout, JWKS.
+- `dotnet test` requires Docker to be running.
+
+## Known issues
+
+- Refresh token race: if a losing concurrent request revokes the family before the winning request inserts its new token, the new token stays valid. Fix: after inserting the new token, re-check whether the family was revoked; if so, revoke the new token and return 401.
+- Expired and used refresh tokens are never deleted (a cleanup job is planned).
 
 ## Git workflow
 
@@ -169,8 +223,10 @@ Notes:
 
 ## Roadmap
 
-1. Identity: FluentValidation for requests.
-2. Identity: integration tests with Testcontainers.
-3. Identity: background cleanup of expired refresh tokens; optional absolute session lifetime.
-4. Gateway with YARP: route `/auth/*`, CORS, rate limiting on login and refresh.
-5. `BuildingBlocks/Common`: shared JWT validation (via JWKS), Serilog, and error-handling extensions.
+1. Gateway and BuildingBlocks.Common (current step).
+2. Blog service: first business service, protected by JWT through BuildingBlocks.Common.
+3. Identity: fix the refresh token family race (see Known issues).
+4. Identity: background cleanup of expired refresh tokens; optional absolute session lifetime.
+5. Gateway tests (routing, CORS, rate limiting).
+6. CI with GitHub Actions: build, test, build Docker images.
+7. Observability (OpenTelemetry + Seq/Grafana) when the number of services grows.
