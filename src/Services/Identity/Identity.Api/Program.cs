@@ -79,3 +79,6 @@ app.MapHealthChecks("/health");
 app.MapAuthEndpoints();
 
 app.Run();
+
+// Exposes the implicit Program class so WebApplicationFactory<Program> can use it in tests.
+public partial class Program { }
