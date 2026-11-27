@@ -18,8 +18,8 @@ Guidance for Claude Code when working in the `harley-core` repository.
 | Service | Purpose | Status |
 |---|---|---|
 | Identity | Registration, login, JWT issuing, refresh tokens | Done (core flows, validation, integration tests) |
-| Gateway (YARP) | Single entry point, CORS, rate limiting | In progress |
-| BuildingBlocks.Common | Shared JWT validation via JWKS for downstream services | In progress |
+| Gateway (YARP) | Single entry point, CORS, rate limiting | Done |
+| BuildingBlocks.Common | Shared JWT validation via JWKS for downstream services | Done |
 | Blog | Blog features | Next |
 | Finance | Money management | Planned |
 | English | English learning features | Planned |
@@ -223,10 +223,9 @@ Notes:
 
 ## Roadmap
 
-1. Gateway and BuildingBlocks.Common (current step).
-2. Blog service: first business service, protected by JWT through BuildingBlocks.Common.
-3. Identity: fix the refresh token family race (see Known issues).
-4. Identity: background cleanup of expired refresh tokens; optional absolute session lifetime.
-5. Gateway tests (routing, CORS, rate limiting).
-6. CI with GitHub Actions: build, test, build Docker images.
-7. Observability (OpenTelemetry + Seq/Grafana) when the number of services grows.
+1. Blog service: first business service, protected by JWT through BuildingBlocks.Common.
+2. Identity: fix the refresh token family race (see Known issues).
+3. Identity: background cleanup of expired refresh tokens; optional absolute session lifetime.
+4. Gateway tests (routing, CORS, rate limiting).
+5. CI with GitHub Actions: build, test, build Docker images.
+6. Observability (OpenTelemetry + Seq/Grafana) when the number of services grows.
