@@ -38,5 +38,19 @@ services:
     ports:
       - "5001:8080"
 
+  gateway-api:
+    build:
+      context: .
+      dockerfile: src/Gateway/Gateway.Api/Dockerfile
+    container_name: harley-gateway-api
+    restart: unless-stopped
+    environment:
+      ASPNETCORE_ENVIRONMENT: Development
+      ReverseProxy__Clusters__identity__Destinations__primary__Address: http://identity-api:8080/
+    depends_on:
+      - identity-api
+    ports:
+      - "8080:8080"
+
 volumes:
   pgdata:
