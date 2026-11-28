@@ -61,4 +61,13 @@ public sealed class RegisterTests(IdentityApiFactory factory) : ApiTestBase(fact
         var json = await ReadJsonAsync(response);
         Assert.True(json.GetProperty("errors").TryGetProperty("Password", out _));
     }
+
+     [Fact]
+    public async Task Register_DoesNotEmitALocationHeader()
+    {
+        var response = await RegisterRawAsync(TestData.UniqueEmail());
+
+        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+        Assert.Null(response.Headers.Location);
+    }
 }

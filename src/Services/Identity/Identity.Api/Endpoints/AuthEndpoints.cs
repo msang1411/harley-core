@@ -13,7 +13,7 @@ public static class AuthEndpoints
         group.MapPost("/register", async (RegisterRequest request, IAuthService auth) =>
         {
             var result = await auth.RegisterAsync(request);
-            return result.IsSuccess ? Results.Created("/auth/me", result.Value) : result.ToProblem();
+            return result.IsSuccess ? Results.Json(result.Value, statusCode: StatusCodes.Status201Created) : result.ToProblem();
         }).WithValidation<RegisterRequest>();
 
         group.MapPost("/login", async (LoginRequest request, IAuthService auth) =>

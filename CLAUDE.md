@@ -105,12 +105,27 @@ Design decisions that must be preserved:
 
 - The Gateway is a YARP reverse proxy (`src/Gateway/Gateway.Api`). Routes and clusters live in `appsettings.json` under `ReverseProxy`.
 - It only routes, applies CORS, and rate limits. It contains no business logic and does not validate JWTs.
-- Routing: `/auth/{**catch-all}` goes to Identity. More specific routes for `/auth/login`, `/auth/register`, and `/auth/refresh` take precedence so that they can carry rate limit policies.
 - Rate limiting uses the built-in ASP.NET Core rate limiter (sliding window, partitioned by client IP). Policies: `auth-credentials` (login and register) and `auth-refresh`. Limits come from the `RateLimiting` config section. Counters live in memory, per instance.
-- CORS uses one named policy, `frontend`. Allowed origins come from `Cors:AllowedOrigins` (exact origins, no trailing slash). Never use `*` together with credentials.
+- CORS uses one named policy, `frontend`. Allowed origins come from `Cors:AllowedOrigins` (exact origins, no trailing slash). Never use `*` together with credentials. Add `PUT` and `DELETE` to the allowed methods when Blog needs them.
 - Middleware order matters: `UseCors` comes before `UseRateLimiter`, so preflight requests do not consume permits.
 - Behind a reverse proxy in production, configure `ForwardedHeaders` with explicit trusted proxies. Otherwise every client appears with the proxy's IP and they all share one rate limit.
 - Adding a new service means adding a cluster and its routes to the Gateway configuration.
+- Public API routes live under `/api/<app>/...` (for example `/api/auth/*`, `/api/blog/*`, `/api/lazy-finance/*`, `/api/english/*`). The Gateway strips the prefix with the YARP `PathRemovePrefix` transform, so services expose unprefixed paths such as `/auth/login` and `/posts` and never know about `/api`.
+- Route `Path` values, including the ones carrying rate limit policies, always use the full public path (for example `/api/auth/login`). The most specific route wins over `{**catch-all}`.
+- The Gateway's own `/` and `/health` stay outside `/api` (infrastructure endpoints).
+- Services must not emit absolute or prefixed URLs (for example `Location` headers), because they do not know their public path. Media URLs inside post HTML are stored as relative paths (`/api/blog/media/{id}`).
+- The frontend lives in a **separate repository**. In production the frontend and `/api` are served from the same domain through a reverse proxy, so no CORS is needed there. In development the frontend dev server proxies `/api` to the Gateway (`http://localhost:8080`). The Gateway's CORS policy remains for development setups that use a different origin.
+
+## Roles and apps (decided, implemented in Phase 1)
+
+- Roles live in **Identity** (ASP.NET Identity role table) and are issued in the access token as `role` claims. Other services only read claims; they never assign roles.
+- App keys: `blog`, `lazy-finance`, `english`. The same key is used in public paths (`/api/lazy-finance`), in the activation endpoint, and in role names.
+- Roles: `blog-member`, `blog-writer`, `blog-admin`, `lazy-finance-member`, `english-member`, and `super-admin`.
+- Hierarchy is expressed in **policies inside each service**, not by assigning several roles to one user. Example for Blog: `blog.comment` = member, writer, or admin; `blog.write` = writer or admin; `blog.moderate` = admin.
+- `super-admin` satisfies every policy through one shared authorization handler in `BuildingBlocks.Common`. Ownership checks written in code ("only my own post") must check super-admin explicitly.
+- There is no self-service path to `super-admin`. The first super-admin is seeded from configuration or secrets at startup, only when none exists.
+- Activation: `POST /auth/apps/{app}/activate` (authenticated, allowed app keys only, assigns only the `*-member` role of that app). The client then calls `/auth/refresh` to get a token containing the new role. Role changes reach existing tokens after at most one access token lifetime (15 minutes).
+- Blog shows `DisplayName`, never the email. App-specific data in other services is created lazily on the first request, keyed by `UserId`.
 
 ## BuildingBlocks.Common: JWT validation for downstream services
 
@@ -178,7 +193,7 @@ Notes:
 - Use `async`/`await` end to end and pass a `CancellationToken` where a method touches I/O and the signature allows it.
 - Use `DateTime.UtcNow` only; store and compare all times in UTC.
 - Prefer small, focused classes. Do not introduce MediatR, AutoMapper, or similar libraries unless the maintainer asks.
-- Validation: simple checks live in the application service for now. FluentValidation is planned; add it only when requested.
+- Validation: request shape checks (required, max length, format) use FluentValidation. Validators live in `Application` and are attached to endpoints with `.WithValidation<T>()` (an endpoint filter in `Api`). Business rules (duplicate email, password complexity) stay in the application service and ASP.NET Identity. Do not duplicate the password policy in validators.
 - Never swallow exceptions silently. Log with Serilog structured logging (`{UserId}` placeholders, not string concatenation).
 
 ## Security rules
@@ -223,9 +238,12 @@ Notes:
 
 ## Roadmap
 
-1. Blog service: first business service, protected by JWT through BuildingBlocks.Common.
-2. Identity: fix the refresh token family race (see Known issues).
-3. Identity: background cleanup of expired refresh tokens; optional absolute session lifetime.
-4. Gateway tests (routing, CORS, rate limiting).
-5. CI with GitHub Actions: build, test, build Docker images.
-6. Observability (OpenTelemetry + Seq/Grafana) when the number of services grows.
+0. Phase 0 (done): public API under `/api`, Gateway strips the prefix.
+1. Phase 1: role system in Identity (`DisplayName`, role seeding, super-admin seeding, app activation endpoint, role management endpoints, super-admin handler and `AppRoles` in `BuildingBlocks.Common`).
+2. Phase 2: Blog service skeleton (four projects, `blog_db`, Dockerfile, Compose, Gateway route `/api/blog`, JWT via `BuildingBlocks.Common`, test infrastructure).
+3. Phase 3: categories and tags.
+4. Phase 4: posts (workflow Draft, PendingReview, Published, Rejected, Unpublished; server-side HTML sanitizer; Vietnamese-aware slugs; pagination and filtering).
+5. Phase 5: image upload (magic-byte validation, EXIF stripping, `IMediaStorage`).
+6. Phase 6: comments (plain text, soft delete, moderation, rate limiting at the Gateway).
+7. Phase 7: polish (full-text search, orphan media cleanup, edit-after-publish).
+8. Later: fix the refresh token family race, cleanup of expired tokens, Gateway tests, CI, observability.
